@@ -459,12 +459,39 @@ function posEnLinea() {
 
 /* ---------- Cámara y grabación ---------- */
 let camStream = null, audioStream = null, grabador = null, trozos = [], tRecIni = 0, tRecInt = null, ultimoVideo = null;
+const esVertical = () => innerHeight >= innerWidth;
+const pideCamara = (v) => navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: 'user', frameRate: { ideal: 30 } }, v), audio: false });
 async function abreCamara() {
   if (aj.cam === 'off' || camStream) return;
+  const vert = esVertical();
+  /* Safari a veces entrega 1920x1080 aunque el telefono este de pie: se prueba una lista y se queda la primera que salga vertical */
+  const intentos = vert
+    ? [{ width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }, { width: { ideal: 1920 }, height: { ideal: 1080 } }, { width: { ideal: 720 }, height: { ideal: 1280 } }]
+    : [{ width: { ideal: 1920 }, height: { ideal: 1080 } }];
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, audio: false });
+    let s = null;
+    for (const v of intentos) {
+      if (s) s.getTracks().forEach(t => t.stop());
+      s = await pideCamara(v);
+      const st = s.getVideoTracks()[0].getSettings();
+      if (!vert || (st.height || 0) >= (st.width || 0)) break;
+    }
+    camStream = s;
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
   } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
+}
+/* Si la camara sigue entregando video horizontal con el telefono de pie, se graba un canvas 1080x1920 con el mismo recorte (cover) que se ve en pantalla */
+let canvasRaf = 0;
+function pistaVerticalDeCanvas() {
+  const v = $('cam'), cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1920;
+  const c = cv.getContext('2d');
+  const dibuja = () => {
+    const vw = v.videoWidth, vh = v.videoHeight;
+    if (vw && vh) { const k = Math.max(1080 / vw, 1920 / vh), w = vw * k, h = vh * k; c.drawImage(v, (1080 - w) / 2, (1920 - h) / 2, w, h); }
+    canvasRaf = requestAnimationFrame(dibuja);
+  };
+  dibuja();
+  return cv.captureStream(30).getVideoTracks()[0];
 }
 function cierraCamara() { if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; $('cam').srcObject = null; } }
 function tipoVideo() {
@@ -477,7 +504,11 @@ async function empiezaGrabar() {
   if (!camStream) return;
   try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
   catch (e) { aviso('Sin micrófono: grabo solo imagen.'); audioStream = null; }
-  const pista = new MediaStream([...camStream.getVideoTracks(), ...(audioStream ? audioStream.getAudioTracks() : [])]);
+  const cm = $('cam');
+  const horizontal = esVertical() && cm.videoWidth > cm.videoHeight;
+  if (horizontal) aviso('Tu cámara entrega video horizontal: grabo recortado a vertical.');
+  const pistaVideo = horizontal ? [pistaVerticalDeCanvas()] : camStream.getVideoTracks();
+  const pista = new MediaStream([...pistaVideo, ...(audioStream ? audioStream.getAudioTracks() : [])]);
   const tipo = tipoVideo();
   try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: 8000000 } : undefined); }
   catch (e) { grabador = new MediaRecorder(pista); }
@@ -485,6 +516,7 @@ async function empiezaGrabar() {
   grabador.ondataavailable = (e) => { if (e.data && e.data.size) trozos.push(e.data); };
   grabador.onstop = () => {
     const t = grabador.mimeType || tipo || 'video/mp4';
+    cancelAnimationFrame(canvasRaf);
     ultimoVideo = new Blob(trozos, { type: t });
     if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
     const seg = Math.round((Date.now() - tRecIni) / 1000);
