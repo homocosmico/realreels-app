@@ -474,7 +474,8 @@ const LENTES = [
   { n: 'L3', v: { width: { ideal: 720 }, height: { ideal: 1280 } } },
   { n: 'L4', v: { aspectRatio: { ideal: 9 / 16 } } },
   { n: 'L5', v: { width: { ideal: 640 }, height: { ideal: 480 } } },
-  { n: 'L6', v: { width: { ideal: 1920 }, height: { ideal: 1440 } } }
+  { n: 'L6', v: { width: { ideal: 1920 }, height: { ideal: 1440 } } },
+  { n: 'L7', v: { width: { ideal: 3840 }, height: { ideal: 2160 } } }
 ];
 async function abreCamara() {
   if (aj.cam === 'off' || camStream) return;
@@ -486,6 +487,7 @@ async function abreCamara() {
     try { s = await pideCamara(L.v); }
     catch (e) { s = await pideCamara({}); }
     camStream = s;
+    ajustaLienzo(s.getVideoTracks()[0].getSettings());
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
     const st = s.getVideoTracks()[0].getSettings();
     const modoApp = (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) ? 'app' : 'Safari';
@@ -501,14 +503,22 @@ async function abreCamara() {
 }
 /* La vista previa y la grabacion salen del MISMO canvas 1080x1920: lo que ves es lo que se graba, vertical, sin importar como entregue el video la camara */
 const cvCam = $('camCv'), ctxCam = cvCam.getContext('2d');
+/* 4K vertical solo si la camara lo entrega vertical y de 3840 de largo; en cualquier otro caso 1080x1920 */
+let grande = false;
+function ajustaLienzo(st) {
+  const w = st.width || 0, h = st.height || 0;
+  grande = h >= w && h >= 3840;
+  cvCam.width = grande ? 2160 : 1080; cvCam.height = grande ? 3840 : 1920;
+}
 function dibujaCam() {
   const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
   if (camStream && vw && vh) {
     /* vertical: llena el lienzo 9:16 (recorte ligero, como la camara del iPhone).
        horizontal: cabe completo con negro arriba y abajo; nunca el zoom de recortar 16:9 dentro de 9:16 */
-    const k = vh >= vw ? Math.max(1080 / vw, 1920 / vh) : Math.min(1080 / vw, 1920 / vh), w = vw * k, h = vh * k;
-    ctxCam.fillStyle = '#000'; ctxCam.fillRect(0, 0, 1080, 1920);
-    ctxCam.drawImage(v, (1080 - w) / 2, (1920 - h) / 2, w, h);
+    const CW = cvCam.width, CH = cvCam.height;
+    const k = vh >= vw ? Math.max(CW / vw, CH / vh) : Math.min(CW / vw, CH / vh), w = vw * k, h = vh * k;
+    ctxCam.fillStyle = '#000'; ctxCam.fillRect(0, 0, CW, CH);
+    ctxCam.drawImage(v, (CW - w) / 2, (CH - h) / 2, w, h);
   }
   requestAnimationFrame(dibujaCam);
 }
@@ -527,7 +537,7 @@ async function empiezaGrabar() {
   const pistaVideo = cvCam.captureStream(30).getVideoTracks();
   const pista = new MediaStream([...pistaVideo, ...(audioStream ? audioStream.getAudioTracks() : [])]);
   const tipo = tipoVideo();
-  try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: 8000000 } : undefined); }
+  try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: grande ? 25000000 : 8000000 } : undefined); }
   catch (e) { grabador = new MediaRecorder(pista); }
   trozos = [];
   grabador.ondataavailable = (e) => { if (e.data && e.data.size) trozos.push(e.data); };
