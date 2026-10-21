@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Prompter</title>
+<meta name="theme-color" content="#0B0B0B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Una sola apariencia, oscura a propósito: es una herramienta de grabación. */
+:root{
+  --negro:#0B0B0B; --panel:#161616; --panel2:#111111; --borde:#2A2A2A;
+  --hueso:#F4F1EC; --gris:#9A9A9A; --gris2:#B5B5B5; --leido:#5E5E5E;
+  --rojo:#C8102E; --rojo-txt:#FF6B7F;
+  --titulo:'Bebas Neue', Impact, 'Arial Narrow', sans-serif;
+  --cuerpo:'DM Sans', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --sa-t:env(safe-area-inset-top,0px); --sa-b:env(safe-area-inset-bottom,0px);
+  --sa-l:env(safe-area-inset-left,0px); --sa-r:env(safe-area-inset-right,0px);
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--negro);color:var(--hueso);font-family:var(--cuerpo);font-size:15px}
+body{overflow:hidden;overscroll-behavior:none}
+button{font-family:var(--cuerpo);color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--hueso);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* ---------- Editor ---------- */
+#editor{position:fixed;inset:0;display:flex;flex-direction:column;gap:14px;
+  padding:calc(var(--sa-t) + 18px) max(16px,var(--sa-r)) calc(var(--sa-b) + 16px) max(16px,var(--sa-l))}
+.cabeza{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+.cabeza h1{margin:0;font-family:var(--titulo);font-weight:400;font-size:52px;line-height:.9;letter-spacing:.5px}
+.cabeza small{color:var(--gris);font-size:12px;letter-spacing:2px;text-transform:uppercase}
+.guiones{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.guiones::-webkit-scrollbar{display:none}
+.chip{flex-shrink:0;height:36px;padding:0 14px;border-radius:99px;border:1px solid var(--borde);background:transparent;color:var(--gris2);font-size:13px;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip.on{background:var(--hueso);color:var(--negro);border-color:var(--hueso);font-weight:600}
+.chip.nuevo{color:var(--hueso)}
+#titulo{height:44px;border-radius:12px;border:1px solid var(--borde);background:var(--panel2);color:var(--hueso);padding:0 14px;font-size:16px;font-family:var(--cuerpo)}
+#texto-edit{flex:1;min-height:0;resize:none;border-radius:14px;border:1px solid var(--borde);background:var(--panel2);color:var(--hueso);padding:14px;font-size:16px;line-height:1.5;font-family:var(--cuerpo)}
+.fila{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.meta{color:var(--gris);font-size:12px;font-variant-numeric:tabular-nums}
+.btn{height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--borde);background:transparent;font-size:14px;font-weight:600}
+.btn.peligro{color:var(--rojo-txt);border-color:#3a1a1f}
+.btn.grande{height:56px;flex:1;border:none;background:var(--hueso);color:var(--negro);font-size:17px;font-weight:700;border-radius:14px}
+select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padding-right:14px}
+.confirma{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--gris2)}
+
+/* ---------- Prompter ---------- */
+#prompter{position:fixed;inset:0;background:#000;overflow:hidden;touch-action:none}
+#cam{position:absolute;object-fit:cover;background:#000}
+#prompter[data-cam="fondo"] #cam{inset:0;width:100%;height:100%}
+#prompter[data-cam="ventana"] #cam{width:28%;aspect-ratio:9/16;height:auto;right:max(12px,var(--sa-r));bottom:calc(var(--sa-b) + 236px);border-radius:16px;border:1px solid #333;z-index:3}
+#prompter[data-cam="off"] #cam{display:none}
+#cam.espejo{transform:scaleX(-1)}
+#velo{position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(to bottom,rgba(0,0,0,var(--velo)) 0%,rgba(0,0,0,var(--velo)) 55%,rgba(0,0,0,calc(var(--velo) * .35)) 80%,rgba(0,0,0,0) 100%)}
+#prompter[data-cam="off"] #velo,#prompter[data-cam="ventana"] #velo{display:none}
+#ventanaTexto{position:absolute;left:0;right:0;top:0;bottom:0;overflow:hidden;z-index:2;
+  -webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,.45) 0%,#000 14%,#000 50%,rgba(0,0,0,0) 66%);
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.45) 0%,#000 14%,#000 50%,rgba(0,0,0,0) 66%)}
+#rollo{position:absolute;left:0;right:0;top:0;will-change:transform;
+  padding:0 max(22px,var(--sa-r)) 0 max(30px,var(--sa-l));
+  font-weight:600;line-height:1.28;letter-spacing:-.2px;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+#rollo.espejoTexto{transform-origin:center}
+.linea{margin:0 0 .42em}
+.linea.vacia{height:.6em}
+.w{transition:color .15s}
+.w.leido{color:var(--leido)}
+.w.sig{text-decoration:underline;text-decoration-color:var(--rojo);text-decoration-thickness:3px;text-underline-offset:6px}
+#marca{position:absolute;left:max(8px,var(--sa-l));width:0;height:0;z-index:4;pointer-events:none;
+  border-top:9px solid transparent;border-bottom:9px solid transparent;border-left:12px solid var(--rojo)}
+#cuenta{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:9;
+  font-family:var(--titulo);font-size:180px;color:var(--hueso);background:rgba(0,0,0,.35);pointer-events:none}
+#estado{position:absolute;top:calc(var(--sa-t) + 10px);right:max(12px,var(--sa-r));z-index:6;display:flex;gap:6px;pointer-events:none}
+.pastilla{height:26px;padding:0 10px;border-radius:99px;background:rgba(11,11,11,.75);border:1px solid #333;font-size:12px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.pastilla .punto{width:8px;height:8px;border-radius:4px;background:var(--gris)}
+.pastilla.oye .punto{background:var(--hueso);animation:late 1.2s infinite}
+.pastilla.rec{border-color:var(--rojo)} .pastilla.rec .punto{background:var(--rojo);animation:late 1s infinite}
+@keyframes late{50%{opacity:.25}}
+
+#controles{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;flex-direction:column;gap:10px;
+  padding:14px max(12px,var(--sa-r)) calc(var(--sa-b) + 12px) max(12px,var(--sa-l));
+  background:linear-gradient(to top,rgba(0,0,0,.92),rgba(0,0,0,.75) 70%,rgba(0,0,0,0));transition:opacity .25s,transform .25s}
+#controles.oculto{opacity:0;transform:translateY(20px);pointer-events:none}
+.barra{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.grupo{display:flex;gap:6px;align-items:center}
+.ic{width:44px;height:44px;border-radius:12px;border:1px solid #333;background:rgba(22,22,22,.85);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700}
+.ic svg{width:20px;height:20px}
+.ic.on{background:var(--hueso);color:var(--negro);border-color:var(--hueso)}
+.seg{display:flex;border:1px solid #333;border-radius:12px;overflow:hidden;background:rgba(22,22,22,.85)}
+.seg button{height:42px;padding:0 14px;border:none;background:transparent;font-size:14px;font-weight:600;color:var(--gris2)}
+.seg button.on{background:var(--hueso);color:var(--negro)}
+.seg button:disabled{opacity:.35}
+.vel{min-width:58px;text-align:center;font-size:13px;color:var(--gris2);font-variant-numeric:tabular-nums}
+#play{flex:1;height:56px;border-radius:14px;border:none;background:var(--hueso);color:var(--negro);font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
+#rec{width:56px;height:56px;border-radius:28px;border:2px solid var(--hueso);background:transparent;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#rec span{width:22px;height:22px;border-radius:11px;background:var(--rojo);transition:border-radius .2s,width .2s,height .2s}
+#rec.on span{width:20px;height:20px;border-radius:4px}
+#aviso{position:absolute;left:50%;top:calc(var(--sa-t) + 46px);transform:translateX(-50%);z-index:10;max-width:calc(100% - 32px);
+  background:rgba(22,22,22,.95);border:1px solid #333;border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.35;text-align:center}
+#hoja{position:absolute;left:0;right:0;bottom:0;z-index:12;background:var(--panel);border-top:1px solid #2A2A2A;border-radius:20px 20px 0 0;
+  padding:18px max(16px,var(--sa-r)) calc(var(--sa-b) + 16px) max(16px,var(--sa-l));display:flex;flex-direction:column;gap:12px}
+#hoja h2{margin:0;font-family:var(--titulo);font-weight:400;font-size:32px}
+#hoja p{margin:0;color:var(--gris2);font-size:14px;line-height:1.4}
+@media (prefers-reduced-motion:reduce){.w,#controles{transition:none}.pastilla .punto{animation:none}}
+</style>
+</head>
+<body>
+
+<!-- ============ EDITOR ============ -->
+<section id="editor">
+  <div class="cabeza">
+    <h1>Prompter</h1>
+    <small id="cuentaGuiones"></small>
+  </div>
+  <div class="guiones" id="guiones" role="tablist" aria-label="Guiones"></div>
+  <input id="titulo" type="text" placeholder="Título del guion" autocomplete="off" aria-label="Título del guion">
+  <textarea id="texto-edit" placeholder="Pega aquí tu guion. Una oración por línea." aria-label="Texto del guion"></textarea>
+  <div class="fila">
+    <span class="meta" id="metaTexto"></span>
+  </div>
+  <div class="fila">
+    <button class="btn" id="pegar" type="button">Pegar</button>
+    <select class="btn" id="idioma" aria-label="Idioma de la voz">
+      <option value="es-MX">Voz: español</option>
+      <option value="en-US">Voz: inglés</option>
+    </select>
+    <span id="zonaBorrar"><button class="btn peligro" id="borrar" type="button">Borrar</button></span>
+  </div>
+  <div class="fila">
+    <button class="btn grande" id="empezar" type="button">Abrir prompter</button>
+  </div>
+</section>
+
+<!-- ============ PROMPTER ============ -->
+<section id="prompter" hidden data-cam="fondo">
+  <video id="cam" playsinline autoplay muted class="espejo"></video>
+  <div id="velo"></div>
+  <div id="ventanaTexto"><div id="rollo"></div></div>
+  <div id="marca"></div>
+  <div id="estado">
+    <div class="pastilla" id="pRec" hidden><span class="punto"></span><span id="tRec">0:00</span></div>
+    <div class="pastilla" id="pVoz" hidden><span class="punto"></span><span id="tVoz">Voz</span></div>
+  </div>
+  <div id="cuenta" hidden></div>
+  <div id="aviso" hidden role="status"></div>
+
+  <div id="controles">
+    <div class="barra">
+      <div class="grupo">
+        <button class="ic" id="salir" type="button" aria-label="Volver al guion">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="seg" role="group" aria-label="Modo">
+          <button id="mVoz" type="button">Voz</button>
+          <button id="mManual" type="button">Manual</button>
+        </div>
+      </div>
+      <div class="grupo">
+        <button class="ic" id="bCam" type="button" aria-label="Cámara: fondo, ventana o apagada">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        </button>
+        <button class="ic" id="bEspejo" type="button" aria-label="Voltear el texto en espejo">⇋</button>
+        <button class="ic" id="bInicio" type="button" aria-label="Regresar al inicio del guion">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="barra">
+      <div class="grupo">
+        <button class="ic" id="fMenos" type="button" aria-label="Letra más chica">A−</button>
+        <button class="ic" id="fMas" type="button" aria-label="Letra más grande">A+</button>
+      </div>
+      <div class="grupo" id="grupoVel">
+        <button class="ic" id="vMenos" type="button" aria-label="Más lento">−</button>
+        <span class="vel" id="vel">1.0x</span>
+        <button class="ic" id="vMas" type="button" aria-label="Más rápido">+</button>
+      </div>
+    </div>
+    <div class="barra">
+      <button id="rec" type="button" aria-label="Grabar video"><span></span></button>
+      <button id="play" type="button">Empezar</button>
+    </div>
+  </div>
+
+  <div id="hoja" hidden>
+    <h2>Toma grabada</h2>
+    <p id="hojaInfo"></p>
+    <button class="btn grande" id="guardarVideo" type="button">Guardar video</button>
+    <button class="btn" id="descartar" type="button">Descartar</button>
+  </div>
+</section>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- Almacenamiento seguro ---------- */
+const guarda = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const lee = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+
+const EJEMPLO = {
+  id: 'ejemplo', titulo: 'Guion de prueba',
+  texto: 'Este es un guion de prueba para revisar el prompter.\nPega tu guion arriba y escribe una oración por línea.\nEn modo voz el texto avanza mientras hablas.\nSi te saltas una frase, el prompter te alcanza.\nEn modo manual avanza solo, a la velocidad que tú elijas.\nToca la pantalla para pausar o para ver los controles.\nArrastra con el dedo para regresar o adelantar.',
+  t: Date.now()
+};
+
+let guiones = lee('pr_guiones', null);
+if (!Array.isArray(guiones) || !guiones.length) guiones = [EJEMPLO];
+let actualId = lee('pr_actual', guiones[0].id);
+if (!guiones.find(g => g.id === actualId)) actualId = guiones[0].id;
+
+const AJ_DEF = { fs: 40, vel: 1.0, modo: 'voz', cam: 'fondo', espejoCam: true, espejoTexto: false, idioma: 'es-MX', velo: 0.55 };
+const aj = Object.assign({}, AJ_DEF, lee('pr_ajustes', {}));
+const guardaAj = () => guarda('pr_ajustes', aj);
+
+const $ = (id) => document.getElementById(id);
+
+/* ---------- Editor ---------- */
+const actual = () => guiones.find(g => g.id === actualId);
+
+function pintaGuiones() {
+  const c = $('guiones'); c.textContent = '';
+  guiones.slice().sort((a, b) => b.t - a.t).forEach(g => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip' + (g.id === actualId ? ' on' : '');
+    b.textContent = g.titulo || 'Sin título';
+    b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', g.id === actualId);
+    b.onclick = () => { guardaEditor(); actualId = g.id; guarda('pr_actual', actualId); cargaEditor(); };
+    c.appendChild(b);
+  });
+  const n = document.createElement('button');
+  n.type = 'button'; n.className = 'chip nuevo'; n.textContent = '+ Nuevo';
+  n.onclick = () => {
+    guardaEditor();
+    const g = { id: 'g' + Date.now().toString(36), titulo: '', texto: '', t: Date.now() };
+    guiones.push(g); actualId = g.id; guarda('pr_actual', actualId); guardaTodos(); cargaEditor(); $('titulo').focus();
+  };
+  c.appendChild(n);
+  $('cuentaGuiones').textContent = guiones.length === 1 ? '1 guion' : guiones.length + ' guiones';
+}
+
+function metaTexto() {
+  const t = $('texto-edit').value;
+  const palabras = (t.match(/\S+/g) || []).length;
+  const min = palabras / 150; // ritmo de habla natural
+  const mm = Math.floor(min), ss = Math.round((min - mm) * 60);
+  $('metaTexto').textContent = palabras + ' palabras · ' + mm + ':' + String(ss).padStart(2, '0') + ' aprox. hablando';
+}
+
+function cargaEditor() {
+  const g = actual();
+  $('titulo').value = g.titulo; $('texto-edit').value = g.texto;
+  $('idioma').value = aj.idioma;
+  restauraBorrar(); pintaGuiones(); metaTexto();
+}
+function guardaTodos() { guarda('pr_guiones', guiones); }
+function guardaEditor() {
+  const g = actual(); if (!g) return;
+  const t = $('titulo').value, x = $('texto-edit').value;
+  if (t !== g.titulo || x !== g.texto) { g.titulo = t; g.texto = x; g.t = Date.now(); guardaTodos(); }
+}
+let tGuarda;
+$('titulo').addEventListener('input', () => { clearTimeout(tGuarda); tGuarda = setTimeout(() => { guardaEditor(); pintaGuiones(); }, 400); });
+$('texto-edit').addEventListener('input', () => { metaTexto(); clearTimeout(tGuarda); tGuarda = setTimeout(guardaEditor, 400); });
+$('idioma').addEventListener('change', (e) => { aj.idioma = e.target.value; guardaAj(); });
+
+$('pegar').onclick = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) { $('texto-edit').value = t; metaTexto(); guardaEditor(); }
+  } catch (e) { $('texto-edit').focus(); }
+};
+
+function restauraBorrar() {
+  const z = $('zonaBorrar'); z.textContent = '';
+  const b = document.createElement('button'); b.className = 'btn peligro'; b.type = 'button'; b.textContent = 'Borrar';
+  b.onclick = () => {
+    z.textContent = '';
+    const w = document.createElement('span'); w.className = 'confirma'; w.textContent = '¿Borrar este guion?';
+    const si = document.createElement('button'); si.className = 'btn peligro'; si.type = 'button'; si.textContent = 'Sí, borrar';
+    const no = document.createElement('button'); no.className = 'btn'; no.type = 'button'; no.textContent = 'No';
+    si.onclick = () => {
+      guiones = guiones.filter(g => g.id !== actualId);
+      if (!guiones.length) guiones = [Object.assign({}, EJEMPLO, { t: Date.now() })];
+      actualId = guiones.slice().sort((a, b) => b.t - a.t)[0].id;
+      guardaTodos(); guarda('pr_actual', actualId); cargaEditor();
+    };
+    no.onclick = restauraBorrar;
+    w.append(si, no); z.appendChild(w);
+  };
+  z.appendChild(b);
+}
+
+/* ---------- Texto del prompter ---------- */
+const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9ñ]/g, '');
+let palabras = [];   // {el, n, linea}
+let pos = 0;         // índice de la siguiente palabra por leer
+
+function construyeRollo(texto) {
+  const r = $('rollo'); r.textContent = ''; palabras = [];
+  texto.replace(/\r/g, '').split('\n').forEach(lin => {
+    const d = document.createElement('div');
+    const toks = lin.trim().split(/\s+/).filter(Boolean);
+    if (!toks.length) { d.className = 'linea vacia'; r.appendChild(d); return; }
+    d.className = 'linea';
+    toks.forEach((tk, i) => {
+      const s = document.createElement('span'); s.className = 'w'; s.textContent = tk;
+      d.appendChild(s); if (i < toks.length - 1) d.appendChild(document.createTextNode(' '));
+      const n = norm(tk); if (n) palabras.push({ el: s, n, linea: d });
+    });
+    r.appendChild(d);
+  });
+  // margen al final para poder terminar arriba
+  const fin = document.createElement('div'); fin.style.height = '80vh'; r.appendChild(fin);
+}
+
+function pintaLeidas(prev, nuevo) {
+  const a = Math.min(prev, nuevo), b = Math.max(prev, nuevo);
+  for (let i = a; i < b && i < palabras.length; i++) palabras[i].el.classList.toggle('leido', i < nuevo);
+  if (palabras[prev]) palabras[prev].el.classList.remove('sig');
+  if (aj.modo === 'voz' && palabras[nuevo]) palabras[nuevo].el.classList.add('sig');
+}
+function ponPos(n) { n = Math.max(0, Math.min(palabras.length, n)); if (n === pos) return; const p = pos; pos = n; pintaLeidas(p, n); }
+
+/* ---------- Seguimiento por voz ---------- */
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const m = a.length, n = b.length; let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+function parecida(a, b) {
+  if (a === b) return true;
+  if (a.length < 4 || b.length < 4) return false;
+  if (a.slice(0, 4) !== b.slice(0, 4) && lev(a, b) > 1) return false;
+  return lev(a, b) <= (a.length > 7 ? 2 : 1);
+}
+const peso = (w) => (w.length >= 4 ? 1 : 0.45);
+
+// Alinea las últimas palabras dichas contra el guion y devuelve la siguiente palabra por leer.
+function alinea(dichas) {
+  const cola = dichas.slice(-8);
+  if (!cola.length || !palabras.length) return null;
+  const lo = Math.max(0, pos - 3), hi = Math.min(palabras.length - 1, pos + 40);
+  let mejor = null;
+  for (let j = lo; j <= hi; j++) {
+    if (!parecida(cola[cola.length - 1], palabras[j].n) && !(cola.length > 1 && parecida(cola[cola.length - 2], palabras[j].n))) continue;
+    let si = cola.length - 1, k = j, score = 0, fallas = 0;
+    while (si >= 0 && k >= 0 && k > j - 14) {
+      if (parecida(cola[si], palabras[k].n)) { score += peso(palabras[k].n); si--; k--; }
+      else if (k - 1 >= 0 && parecida(cola[si], palabras[k - 1].n)) { k--; fallas++; }
+      else { si--; fallas++; }
+      if (fallas > 3) break;
+    }
+    score -= Math.max(0, j - pos) * 0.015;  // preferir lo cercano
+    if (!mejor || score > mejor.score) mejor = { j, score };
+  }
+  if (!mejor) return null;
+  const solo = cola.length === 1 || mejor.score < 1.4;
+  if (solo) {
+    // una sola palabra larga cuenta si está justo delante
+    if (mejor.j >= pos && mejor.j <= pos + 3 && palabras[mejor.j].n.length >= 5) return mejor.j + 1;
+    return null;
+  }
+  return mejor.j + 1;
+}
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, oyendo = false, quiereOir = false;
+
+function iniciaVoz() {
+  if (!SR) { aviso('Este navegador no reconoce voz. Ábrelo en Safari o usa el modo manual.'); cambiaModo('manual'); return; }
+  quiereOir = true;
+  if (oyendo) return;
+  rec = new SR();
+  rec.lang = aj.idioma; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+  rec.onstart = () => { oyendo = true; pintaVoz(); };
+  rec.onresult = (ev) => {
+    let t = '';
+    for (let i = 0; i < ev.results.length; i++) t += ' ' + ev.results[i][0].transcript;
+    const dichas = t.split(/\s+/).map(norm).filter(Boolean);
+    const n = alinea(dichas);
+    if (n != null && n > pos - 2) ponPos(n);
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      quiereOir = false;
+      aviso('Sin permiso de micrófono o de Siri. Actívalos en Ajustes o usa el modo manual.');
+      cambiaModo('manual');
+    } else if (e.error === 'audio-capture') {
+      aviso('El micrófono está ocupado. Sigo en manual.');
+      quiereOir = false; cambiaModo('manual');
+    }
+  };
+  rec.onend = () => {
+    oyendo = false; pintaVoz();
+    if (quiereOir && corriendo && aj.modo === 'voz') setTimeout(() => { if (quiereOir && !oyendo) { try { rec.start(); } catch (e) {} } }, 120);
+  };
+  try { rec.start(); } catch (e) {}
+}
+function paraVoz() { quiereOir = false; if (rec) { try { rec.stop(); } catch (e) {} } oyendo = false; pintaVoz(); }
+function pintaVoz() {
+  const p = $('pVoz'); p.hidden = aj.modo !== 'voz' || !corriendo;
+  p.classList.toggle('oye', oyendo); $('tVoz').textContent = oyendo ? 'Escuchando' : 'Voz';
+}
+
+/* ---------- Desplazamiento ---------- */
+let y = 0, corriendo = false, ultimo = 0, arrastrando = false;
+const lecturaY = () => Math.round(window.innerHeight * 0.24); // cerca de la cámara frontal
+function objetivoVoz() {
+  const p = palabras[Math.min(pos, palabras.length - 1)];
+  if (!p) return y;
+  const lin = p.linea;
+  return lin.offsetTop + lin.offsetHeight / 2 - lecturaY();
+}
+function cuadro(ts) {
+  const dt = Math.min(0.05, (ts - (ultimo || ts)) / 1000); ultimo = ts;
+  if (!arrastrando) {
+    if (aj.modo === 'manual' && corriendo) {
+      y += aj.fs * 0.9 * aj.vel * dt; // aprox. una línea cada 1.5 s a 1.0x
+      const max = $('rollo').scrollHeight - lecturaY() - 40;
+      if (y > max) { y = max; alto(); }
+    } else if (aj.modo === 'voz') {
+      const obj = Math.max(-lecturaY() + 40, objetivoVoz());
+      y += (obj - y) * Math.min(1, dt * 5);
+    }
+  }
+  pintaRollo();
+  requestAnimationFrame(cuadro);
+}
+function pintaRollo() {
+  const r = $('rollo');
+  $('marca').style.top = (lecturaY() - 9) + 'px';
+  r.style.transform = 'translate3d(0,' + (-y).toFixed(1) + 'px,0)' + (aj.espejoTexto ? ' scaleX(-1)' : '');
+}
+function posEnLinea() {
+  // en manual o tras arrastrar: la palabra que está en la línea de lectura
+  const ly = y + lecturaY();
+  for (let i = 0; i < palabras.length; i++) {
+    const l = palabras[i].linea;
+    if (l.offsetTop + l.offsetHeight > ly) return i;
+  }
+  return palabras.length;
+}
+
+/* ---------- Cámara y grabación ---------- */
+let camStream = null, audioStream = null, grabador = null, trozos = [], tRecIni = 0, tRecInt = null, ultimoVideo = null;
+async function abreCamara() {
+  if (aj.cam === 'off' || camStream) return;
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30 } }, audio: false });
+    $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
+  } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
+}
+function cierraCamara() { if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; $('cam').srcObject = null; } }
+function tipoVideo() {
+  const ops = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  return ops.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+}
+async function empiezaGrabar() {
+  if (!window.MediaRecorder) { aviso('Este navegador no graba video.'); return; }
+  if (!camStream) { aj.cam = aj.cam === 'off' ? 'ventana' : aj.cam; pintaCam(); await abreCamara(); }
+  if (!camStream) return;
+  try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { aviso('Sin micrófono: grabo solo imagen.'); audioStream = null; }
+  const pista = new MediaStream([...camStream.getVideoTracks(), ...(audioStream ? audioStream.getAudioTracks() : [])]);
+  const tipo = tipoVideo();
+  try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: 8000000 } : undefined); }
+  catch (e) { grabador = new MediaRecorder(pista); }
+  trozos = [];
+  grabador.ondataavailable = (e) => { if (e.data && e.data.size) trozos.push(e.data); };
+  grabador.onstop = () => {
+    const t = grabador.mimeType || tipo || 'video/mp4';
+    ultimoVideo = new Blob(trozos, { type: t });
+    if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+    const seg = Math.round((Date.now() - tRecIni) / 1000);
+    $('hojaInfo').textContent = 'Duración ' + Math.floor(seg / 60) + ':' + String(seg % 60).padStart(2, '0') + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB';
+    $('hoja').hidden = false;
+  };
+  grabador.start(1000);
+  tRecIni = Date.now(); $('rec').classList.add('on'); $('pRec').hidden = false; $('pRec').classList.add('rec');
+  tRecInt = setInterval(() => { const s = Math.floor((Date.now() - tRecIni) / 1000); $('tRec').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 500);
+  if (!corriendo) empieza();
+}
+function paraGrabar() {
+  if (grabador && grabador.state !== 'inactive') grabador.stop();
+  clearInterval(tRecInt); $('rec').classList.remove('on'); $('pRec').hidden = true; $('tRec').textContent = '0:00';
+  if (corriendo) alto();
+}
+$('rec').onclick = () => { (grabador && grabador.state === 'recording') ? paraGrabar() : empiezaGrabar(); };
+$('guardarVideo').onclick = async () => {
+  if (!ultimoVideo) return;
+  const ext = ultimoVideo.type.includes('mp4') ? 'mp4' : 'webm';
+  const g = actual();
+  const nombre = ((g && g.titulo) || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40) + '_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
+  const file = new File([ultimoVideo], nombre, { type: ultimoVideo.type });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); $('hoja').hidden = true; return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+  $('hoja').hidden = true;
+};
+$('descartar').onclick = () => { ultimoVideo = null; $('hoja').hidden = true; };
+
+/* ---------- Pantalla encendida ---------- */
+let candado = null;
+async function pideCandado() { try { if ('wakeLock' in navigator) candado = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !$('prompter').hidden) pideCandado(); });
+
+/* ---------- Controles ---------- */
+let tAviso, tOculta;
+function aviso(t) { const a = $('aviso'); a.textContent = t; a.hidden = false; clearTimeout(tAviso); tAviso = setTimeout(() => a.hidden = true, 3800); }
+function muestraControles() {
+  $('controles').classList.remove('oculto'); clearTimeout(tOculta);
+  if (corriendo) tOculta = setTimeout(() => $('controles').classList.add('oculto'), 2600);
+}
+function pintaModo() {
+  $('mVoz').classList.toggle('on', aj.modo === 'voz'); $('mManual').classList.toggle('on', aj.modo === 'manual');
+  $('grupoVel').style.visibility = aj.modo === 'manual' ? 'visible' : 'hidden';
+  $('vel').textContent = aj.vel.toFixed(1) + 'x';
+  if (palabras[pos]) palabras[pos].el.classList.toggle('sig', aj.modo === 'voz');
+  pintaVoz();
+}
+function cambiaModo(m) {
+  if (aj.modo === m) { pintaModo(); return; }
+  aj.modo = m; guardaAj();
+  if (m === 'manual') { paraVoz(); } else { ponPos(posEnLinea()); if (corriendo) iniciaVoz(); }
+  pintaModo();
+}
+function pintaCam() {
+  $('prompter').dataset.cam = aj.cam;
+  $('bCam').classList.toggle('on', aj.cam !== 'off');
+  $('cam').classList.toggle('espejo', aj.espejoCam);
+}
+function pintaEspejo() { $('bEspejo').classList.toggle('on', aj.espejoTexto); pintaRollo(); }
+function pintaFuente() { $('rollo').style.fontSize = aj.fs + 'px'; }
+
+function cuentaAtras() {
+  return new Promise(res => {
+    const c = $('cuenta'); let n = 3; c.hidden = false; c.textContent = n;
+    const it = setInterval(() => { n--; if (n <= 0) { clearInterval(it); c.hidden = true; res(); } else c.textContent = n; }, 800);
+  });
+}
+let enCuenta = false;
+async function empieza() {
+  if (corriendo || enCuenta) return;
+  enCuenta = true; $('play').textContent = 'Preparado…';
+  if (aj.modo === 'voz' && SR) iniciaVoz(); // pedir el micrófono durante la cuenta
+  await cuentaAtras(); enCuenta = false;
+  corriendo = true; $('play').textContent = 'Pausa'; pintaVoz(); muestraControles();
+}
+function alto() {
+  corriendo = false; enCuenta = false; paraVoz(); $('play').textContent = 'Seguir'; pintaVoz();
+  $('controles').classList.remove('oculto'); clearTimeout(tOculta);
+}
+
+$('play').onclick = () => { corriendo ? alto() : empieza(); };
+$('mVoz').onclick = () => cambiaModo('voz');
+$('mManual').onclick = () => cambiaModo('manual');
+$('vMenos').onclick = () => { aj.vel = Math.max(0.3, +(aj.vel - 0.1).toFixed(1)); guardaAj(); pintaModo(); muestraControles(); };
+$('vMas').onclick = () => { aj.vel = Math.min(4, +(aj.vel + 0.1).toFixed(1)); guardaAj(); pintaModo(); muestraControles(); };
+$('fMenos').onclick = () => { const p = posEnLinea(); aj.fs = Math.max(22, aj.fs - 4); guardaAj(); pintaFuente(); reubica(p); muestraControles(); };
+$('fMas').onclick = () => { const p = posEnLinea(); aj.fs = Math.min(84, aj.fs + 4); guardaAj(); pintaFuente(); reubica(p); muestraControles(); };
+$('bCam').onclick = async () => {
+  if (grabador && grabador.state === 'recording') { aviso('Detén la grabación para cambiar la cámara.'); return; }
+  aj.cam = aj.cam === 'fondo' ? 'ventana' : aj.cam === 'ventana' ? 'off' : 'fondo'; guardaAj(); pintaCam();
+  if (aj.cam === 'off') cierraCamara(); else await abreCamara();
+  muestraControles();
+};
+$('bEspejo').onclick = () => { aj.espejoTexto = !aj.espejoTexto; guardaAj(); pintaEspejo(); muestraControles(); };
+$('bInicio').onclick = () => { alto(); ponPos(0); y = -lecturaY() + 40; muestraControles(); };
+function reubica(p) {
+  const w = palabras[Math.min(p, palabras.length - 1)];
+  if (w) y = w.linea.offsetTop - lecturaY() + 4;
+}
+
+// tocar: pausa o muestra controles; arrastrar: mueve el texto
+let toque = null;
+$('ventanaTexto').addEventListener('pointerdown', (e) => { toque = { y0: e.clientY, yIni: y, movio: false }; });
+window.addEventListener('pointermove', (e) => {
+  if (!toque) return;
+  const d = e.clientY - toque.y0;
+  if (Math.abs(d) > 8) { toque.movio = true; arrastrando = true; }
+  if (toque.movio) { y = toque.yIni - d; }
+});
+window.addEventListener('pointerup', () => {
+  if (!toque) return;
+  if (toque.movio) { if (aj.modo === 'voz') { ponPos(posEnLinea()); } }
+  else {
+    if ($('controles').classList.contains('oculto')) muestraControles();
+    else if (corriendo) alto();
+    else muestraControles();
+  }
+  toque = null; arrastrando = false;
+});
+
+$('empezar').onclick = async () => {
+  guardaEditor();
+  const g = actual();
+  if (!g.texto.trim()) { $('texto-edit').focus(); return; }
+  $('editor').hidden = true; $('prompter').hidden = false;
+  construyeRollo(g.texto); pintaFuente(); pintaCam(); pintaEspejo();
+  pos = 0; pintaLeidas(0, 0); y = -lecturaY() + 40;
+  corriendo = false; $('play').textContent = 'Empezar';
+  if (!SR) { $('mVoz').disabled = true; if (aj.modo === 'voz') { aj.modo = 'manual'; } }
+  pintaModo(); muestraControles();
+  pideCandado(); abreCamara();
+  try { history.pushState({ p: 1 }, ''); } catch (e) {}
+};
+function salir() {
+  if (grabador && grabador.state === 'recording') paraGrabar();
+  alto(); cierraCamara();
+  if (candado) { try { candado.release(); } catch (e) {} candado = null; }
+  $('prompter').hidden = true; $('editor').hidden = false; $('hoja').hidden = true;
+}
+$('salir').onclick = () => { salir(); try { history.back(); } catch (e) {} };
+window.addEventListener('popstate', () => { if (!$('prompter').hidden) salir(); });
+
+document.documentElement.style.setProperty('--velo', aj.velo);
+cargaEditor();
+requestAnimationFrame(cuadro);
+
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// para pruebas automáticas
+window.__prompter = { alinea: (d) => alinea(d), get pos() { return pos; }, set pos(v) { ponPos(v); }, palabras: () => palabras.length };
+})();
+</script>
+</body>
+</html>
