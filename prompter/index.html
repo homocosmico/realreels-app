@@ -484,7 +484,8 @@ async function abreCamara() {
     camStream = s;
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
     const st = s.getVideoTracks()[0].getSettings();
-    $('pCam').textContent = 'Cámara ' + (st.width || '?') + 'x' + (st.height || '?'); $('pCam').hidden = false;
+    const modoApp = (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) ? 'app' : 'Safari';
+    $('pCam').textContent = 'Cámara ' + (st.width || '?') + 'x' + (st.height || '?') + ' · ' + modoApp + ' · pantalla ' + innerWidth + 'x' + innerHeight; $('pCam').hidden = false;
   } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
 }
 /* La vista previa y la grabacion salen del MISMO canvas 1080x1920: lo que ves es lo que se graba, vertical, sin importar como entregue el video la camara */
