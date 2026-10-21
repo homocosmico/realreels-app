@@ -478,6 +478,10 @@ async function abreCamara() {
     const st = s.getVideoTracks()[0].getSettings();
     const modoApp = (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) ? 'app' : 'Safari';
     $('pCam').textContent = 'Cámara ' + (st.width || '?') + 'x' + (st.height || '?') + ' · ' + modoApp + ' · pantalla ' + innerWidth + 'x' + innerHeight; $('pCam').hidden = false;
+    /* En la app de inicio el iPhone entrega la camara horizontal aunque el telefono este de pie, ya recortada.
+       Eso no se arregla desde la pagina: en Safari si llega vertical. */
+    if (modoApp === 'app' && innerHeight > innerWidth && (st.width || 0) > (st.height || 0))
+      aviso('Desde el ícono de inicio el iPhone recorta la cámara. Abre el prompter en Safari para verla completa.');
   } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
 }
 /* La vista previa y la grabacion salen del MISMO canvas 1080x1920: lo que ves es lo que se graba, vertical, sin importar como entregue el video la camara */
