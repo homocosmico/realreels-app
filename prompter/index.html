@@ -56,11 +56,12 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
 
 /* ---------- Prompter ---------- */
 #prompter{position:fixed;inset:0;background:#000;overflow:hidden;touch-action:none}
-#cam{position:absolute;object-fit:cover;background:#000}
-#prompter[data-cam="fondo"] #cam{inset:0;width:100%;height:100%}
-#prompter[data-cam="ventana"] #cam{width:28%;aspect-ratio:9/16;height:auto;right:max(12px,var(--sa-r));bottom:calc(var(--sa-b) + 236px);border-radius:16px;border:1px solid #333;z-index:3}
-#prompter[data-cam="off"] #cam{display:none}
-#cam.espejo{transform:scaleX(-1)}
+#cam{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+#camCv{position:absolute;background:#000}
+#prompter[data-cam="fondo"] #camCv{inset:0;width:100%;height:100%;object-fit:contain;object-position:center top}
+#prompter[data-cam="ventana"] #camCv{width:28%;aspect-ratio:9/16;height:auto;right:max(12px,var(--sa-r));bottom:calc(var(--sa-b) + 236px);border-radius:16px;border:1px solid #333;z-index:3}
+#prompter[data-cam="off"] #camCv{display:none}
+#camCv.espejo{transform:scaleX(-1)}
 #velo{position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(to bottom,rgba(0,0,0,var(--velo)) 0%,rgba(0,0,0,var(--velo)) 55%,rgba(0,0,0,calc(var(--velo) * .35)) 80%,rgba(0,0,0,0) 100%)}
 #prompter[data-cam="off"] #velo,#prompter[data-cam="ventana"] #velo{display:none}
@@ -102,9 +103,10 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
 .seg button:disabled{opacity:.35}
 .vel{min-width:58px;text-align:center;font-size:13px;color:var(--gris2);font-variant-numeric:tabular-nums}
 #play{flex:1;height:56px;border-radius:14px;border:none;background:var(--hueso);color:var(--negro);font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px}
-#rec{width:56px;height:56px;border-radius:28px;border:2px solid var(--hueso);background:transparent;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#rec{height:56px;padding:0 18px 0 14px;border-radius:28px;border:2px solid var(--hueso);background:transparent;display:flex;align-items:center;justify-content:center;gap:10px;flex-shrink:0;font-size:16px;font-weight:700}
 #rec span{width:22px;height:22px;border-radius:11px;background:var(--rojo);transition:border-radius .2s,width .2s,height .2s}
-#rec.on span{width:20px;height:20px;border-radius:4px}
+#rec.on{background:var(--rojo);border-color:var(--rojo);color:#fff}
+#rec.on span{width:18px;height:18px;border-radius:3px;background:#fff}
 #aviso{position:absolute;left:50%;top:calc(var(--sa-t) + 46px);transform:translateX(-50%);z-index:10;max-width:calc(100% - 32px);
   background:rgba(22,22,22,.95);border:1px solid #333;border-radius:12px;padding:10px 14px;font-size:14px;line-height:1.35;text-align:center}
 #hoja{position:absolute;left:0;right:0;bottom:0;z-index:12;background:var(--panel);border-top:1px solid #2A2A2A;border-radius:20px 20px 0 0;
@@ -143,11 +145,13 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
 
 <!-- ============ PROMPTER ============ -->
 <section id="prompter" hidden data-cam="fondo">
-  <video id="cam" playsinline autoplay muted class="espejo"></video>
+  <video id="cam" playsinline autoplay muted></video>
+  <canvas id="camCv" width="1080" height="1920" class="espejo"></canvas>
   <div id="velo"></div>
   <div id="ventanaTexto"><div id="rollo"></div></div>
   <div id="marca"></div>
   <div id="estado">
+    <div class="pastilla" id="pCam" hidden></div>
     <div class="pastilla" id="pRec" hidden><span class="punto"></span><span id="tRec">0:00</span></div>
     <div class="pastilla" id="pVoz" hidden><span class="punto"></span><span id="tVoz">Voz</span></div>
   </div>
@@ -187,7 +191,7 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
       </div>
     </div>
     <div class="barra">
-      <button id="rec" type="button" aria-label="Grabar video"><span></span></button>
+      <button id="rec" type="button" aria-label="Grabar video"><span></span><b id="recTxt">Grabar</b></button>
       <button id="play" type="button">Empezar</button>
     </div>
   </div>
@@ -466,34 +470,35 @@ async function abreCamara() {
   const vert = esVertical();
   /* Safari a veces entrega 1920x1080 aunque el telefono este de pie: se prueba una lista y se queda la primera que salga vertical */
   const intentos = vert
-    ? [{ width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }, { width: { ideal: 1920 }, height: { ideal: 1080 } }, { width: { ideal: 720 }, height: { ideal: 1280 } }]
+    ? [{ width: { exact: 1080 }, height: { exact: 1920 } }, { width: { exact: 720 }, height: { exact: 1280 } }, { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }, { width: { ideal: 1920 }, height: { ideal: 1080 } }]
     : [{ width: { ideal: 1920 }, height: { ideal: 1080 } }];
   try {
     let s = null;
     for (const v of intentos) {
-      if (s) s.getTracks().forEach(t => t.stop());
-      s = await pideCamara(v);
+      if (s) { s.getTracks().forEach(t => t.stop()); s = null; }
+      try { s = await pideCamara(v); } catch (e) { continue; }
       const st = s.getVideoTracks()[0].getSettings();
       if (!vert || (st.height || 0) >= (st.width || 0)) break;
     }
+    if (!s) s = await pideCamara({});
     camStream = s;
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
+    const st = s.getVideoTracks()[0].getSettings();
+    $('pCam').textContent = 'Cámara ' + (st.width || '?') + 'x' + (st.height || '?'); $('pCam').hidden = false;
   } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
 }
-/* Si la camara sigue entregando video horizontal con el telefono de pie, se graba un canvas 1080x1920 con el mismo recorte (cover) que se ve en pantalla */
-let canvasRaf = 0;
-function pistaVerticalDeCanvas() {
-  const v = $('cam'), cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1920;
-  const c = cv.getContext('2d');
-  const dibuja = () => {
-    const vw = v.videoWidth, vh = v.videoHeight;
-    if (vw && vh) { const k = Math.max(1080 / vw, 1920 / vh), w = vw * k, h = vh * k; c.drawImage(v, (1080 - w) / 2, (1920 - h) / 2, w, h); }
-    canvasRaf = requestAnimationFrame(dibuja);
-  };
-  dibuja();
-  return cv.captureStream(30).getVideoTracks()[0];
+/* La vista previa y la grabacion salen del MISMO canvas 1080x1920: lo que ves es lo que se graba, vertical, sin importar como entregue el video la camara */
+const cvCam = $('camCv'), ctxCam = cvCam.getContext('2d');
+function dibujaCam() {
+  const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
+  if (camStream && vw && vh) {
+    const k = Math.max(1080 / vw, 1920 / vh), w = vw * k, h = vh * k;
+    ctxCam.drawImage(v, (1080 - w) / 2, (1920 - h) / 2, w, h);
+  }
+  requestAnimationFrame(dibujaCam);
 }
-function cierraCamara() { if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; $('cam').srcObject = null; } }
+requestAnimationFrame(dibujaCam);
+function cierraCamara() { if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; $('cam').srcObject = null; $('pCam').hidden = true; } }
 function tipoVideo() {
   const ops = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
   return ops.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
@@ -504,10 +509,7 @@ async function empiezaGrabar() {
   if (!camStream) return;
   try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
   catch (e) { aviso('Sin micrófono: grabo solo imagen.'); audioStream = null; }
-  const cm = $('cam');
-  const horizontal = esVertical() && cm.videoWidth > cm.videoHeight;
-  if (horizontal) aviso('Tu cámara entrega video horizontal: grabo recortado a vertical.');
-  const pistaVideo = horizontal ? [pistaVerticalDeCanvas()] : camStream.getVideoTracks();
+  const pistaVideo = cvCam.captureStream(30).getVideoTracks();
   const pista = new MediaStream([...pistaVideo, ...(audioStream ? audioStream.getAudioTracks() : [])]);
   const tipo = tipoVideo();
   try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: 8000000 } : undefined); }
@@ -516,7 +518,6 @@ async function empiezaGrabar() {
   grabador.ondataavailable = (e) => { if (e.data && e.data.size) trozos.push(e.data); };
   grabador.onstop = () => {
     const t = grabador.mimeType || tipo || 'video/mp4';
-    cancelAnimationFrame(canvasRaf);
     ultimoVideo = new Blob(trozos, { type: t });
     if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
     const seg = Math.round((Date.now() - tRecIni) / 1000);
@@ -524,13 +525,13 @@ async function empiezaGrabar() {
     $('hoja').hidden = false;
   };
   grabador.start(1000);
-  tRecIni = Date.now(); $('rec').classList.add('on'); $('pRec').hidden = false; $('pRec').classList.add('rec');
+  tRecIni = Date.now(); $('rec').classList.add('on'); $('recTxt').textContent = 'Detener'; $('rec').setAttribute('aria-label', 'Detener grabación'); $('pRec').hidden = false; $('pRec').classList.add('rec');
   tRecInt = setInterval(() => { const s = Math.floor((Date.now() - tRecIni) / 1000); $('tRec').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 500);
   if (!corriendo) empieza();
 }
 function paraGrabar() {
   if (grabador && grabador.state !== 'inactive') grabador.stop();
-  clearInterval(tRecInt); $('rec').classList.remove('on'); $('pRec').hidden = true; $('tRec').textContent = '0:00';
+  clearInterval(tRecInt); $('rec').classList.remove('on'); $('recTxt').textContent = 'Grabar'; $('rec').setAttribute('aria-label', 'Grabar video'); $('pRec').hidden = true; $('tRec').textContent = '0:00';
   if (corriendo) alto();
 }
 $('rec').onclick = () => { (grabador && grabador.state === 'recording') ? paraGrabar() : empiezaGrabar(); };
@@ -576,7 +577,7 @@ function cambiaModo(m) {
 function pintaCam() {
   $('prompter').dataset.cam = aj.cam;
   $('bCam').classList.toggle('on', aj.cam !== 'off');
-  $('cam').classList.toggle('espejo', aj.espejoCam);
+  $('camCv').classList.toggle('espejo', aj.espejoCam);
 }
 function pintaEspejo() { $('bEspejo').classList.toggle('on', aj.espejoTexto); pintaRollo(); }
 function pintaFuente() { $('rollo').style.fontSize = aj.fs + 'px'; }
