@@ -183,6 +183,7 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
       <div class="grupo">
         <button class="ic" id="fMenos" type="button" aria-label="Letra más chica">A−</button>
         <button class="ic" id="fMas" type="button" aria-label="Letra más grande">A+</button>
+        <button class="ic" id="bLente" type="button" aria-label="Cambiar la forma de pedir la cámara">L1</button>
       </div>
       <div class="grupo" id="grupoVel">
         <button class="ic" id="vMenos" type="button" aria-label="Más lento">−</button>
@@ -465,23 +466,37 @@ function posEnLinea() {
 let camStream = null, audioStream = null, grabador = null, trozos = [], tRecIni = 0, tRecInt = null, ultimoVideo = null;
 const esVertical = () => innerHeight >= innerWidth;
 const pideCamara = (v) => navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: 'user', frameRate: { ideal: 30 } }, v), audio: false });
+/* Cada lente pide la camara de otra forma. El iPhone en la app de inicio responde distinto que en Safari:
+   se prueba con el boton L y se queda el que se vea completo. Se guarda en el telefono. */
+const LENTES = [
+  { n: 'L1', v: { width: { ideal: 1280 }, height: { ideal: 720 } } },
+  { n: 'L2', v: {} },
+  { n: 'L3', v: { width: { ideal: 720 }, height: { ideal: 1280 } } },
+  { n: 'L4', v: { aspectRatio: { ideal: 9 / 16 } } },
+  { n: 'L5', v: { width: { ideal: 640 }, height: { ideal: 480 } } },
+  { n: 'L6', v: { width: { ideal: 1920 }, height: { ideal: 1440 } } }
+];
 async function abreCamara() {
   if (aj.cam === 'off' || camStream) return;
   /* iOS empata width/height contra sus modos de camara en horizontal (1280x720) y gira solo el video
      cuando el telefono esta de pie: se piden numeros horizontales y nunca "exact", que fuerza recortes */
   try {
     let s = null;
-    try { s = await pideCamara({ width: { ideal: 1280 }, height: { ideal: 720 } }); }
+    const L = LENTES[(aj.lente || 0) % LENTES.length];
+    try { s = await pideCamara(L.v); }
     catch (e) { s = await pideCamara({}); }
     camStream = s;
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
     const st = s.getVideoTracks()[0].getSettings();
     const modoApp = (navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)) ? 'app' : 'Safari';
-    $('pCam').textContent = 'Cámara ' + (st.width || '?') + 'x' + (st.height || '?') + ' · ' + modoApp + ' · pantalla ' + innerWidth + 'x' + innerHeight; $('pCam').hidden = false;
+    await new Promise(r => { const v = $('cam'); if (v.videoWidth) r(); else { v.onloadedmetadata = r; setTimeout(r, 1500); } });
+    const v = $('cam');
+    $('pCam').textContent = L.n + ' · cámara ' + (st.width || '?') + 'x' + (st.height || '?') + ' · video ' + v.videoWidth + 'x' + v.videoHeight + ' · ' + modoApp; $('pCam').hidden = false;
+    $('bLente').textContent = L.n;
     /* En la app de inicio el iPhone entrega la camara horizontal aunque el telefono este de pie, ya recortada.
        Eso no se arregla desde la pagina: en Safari si llega vertical. */
     if (modoApp === 'app' && innerHeight > innerWidth && (st.width || 0) > (st.height || 0))
-      aviso('Desde el ícono de inicio el iPhone recorta la cámara. Abre el prompter en Safari para verla completa.');
+      aviso('La cámara llegó acostada. Toca L para probar otra forma de pedirla.');
   } catch (e) { aviso('No pude abrir la cámara. Revisa el permiso en Ajustes de Safari.'); }
 }
 /* La vista previa y la grabacion salen del MISMO canvas 1080x1920: lo que ves es lo que se graba, vertical, sin importar como entregue el video la camara */
@@ -613,6 +628,12 @@ $('bCam').onclick = async () => {
   aj.cam = aj.cam === 'fondo' ? 'ventana' : aj.cam === 'ventana' ? 'off' : 'fondo'; guardaAj(); pintaCam();
   if (aj.cam === 'off') cierraCamara(); else await abreCamara();
   muestraControles();
+};
+$('bLente').onclick = async () => {
+  if (grabador && grabador.state === 'recording') { aviso('Detén la grabación para cambiar el lente.'); return; }
+  aj.lente = ((aj.lente || 0) + 1) % LENTES.length; guardaAj();
+  cierraCamara(); if (aj.cam === 'off') { aj.cam = 'fondo'; pintaCam(); }
+  await abreCamara(); muestraControles();
 };
 $('bEspejo').onclick = () => { aj.espejoTexto = !aj.espejoTexto; guardaAj(); pintaEspejo(); muestraControles(); };
 $('bInicio').onclick = () => { alto(); ponPos(0); y = -lecturaY() + 40; muestraControles(); };
