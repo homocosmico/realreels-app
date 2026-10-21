@@ -2,7 +2,7 @@
 <html lang="es-MX">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Prompter</title>
 <meta name="theme-color" content="#0B0B0B">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -51,7 +51,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .btn{height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--borde);background:transparent;font-size:14px;font-weight:600}
 .btn.peligro{color:var(--rojo-txt);border-color:#3a1a1f}
 .btn.grande{height:56px;flex:1;border:none;background:var(--hueso);color:var(--negro);font-size:17px;font-weight:700;border-radius:14px}
-select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padding-right:14px}
+select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padding-right:14px;font-size:16px}
 .confirma{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--gris2)}
 
 /* ---------- Prompter ---------- */
@@ -467,20 +467,12 @@ const esVertical = () => innerHeight >= innerWidth;
 const pideCamara = (v) => navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: 'user', frameRate: { ideal: 30 } }, v), audio: false });
 async function abreCamara() {
   if (aj.cam === 'off' || camStream) return;
-  const vert = esVertical();
-  /* Safari a veces entrega 1920x1080 aunque el telefono este de pie: se prueba una lista y se queda la primera que salga vertical */
-  const intentos = vert
-    ? [{ width: { exact: 1080 }, height: { exact: 1920 } }, { width: { exact: 720 }, height: { exact: 1280 } }, { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }, { width: { ideal: 1920 }, height: { ideal: 1080 } }]
-    : [{ width: { ideal: 1920 }, height: { ideal: 1080 } }];
+  /* iOS empata width/height contra sus modos de camara en horizontal (1280x720) y gira solo el video
+     cuando el telefono esta de pie: se piden numeros horizontales y nunca "exact", que fuerza recortes */
   try {
     let s = null;
-    for (const v of intentos) {
-      if (s) { s.getTracks().forEach(t => t.stop()); s = null; }
-      try { s = await pideCamara(v); } catch (e) { continue; }
-      const st = s.getVideoTracks()[0].getSettings();
-      if (!vert || (st.height || 0) >= (st.width || 0)) break;
-    }
-    if (!s) s = await pideCamara({});
+    try { s = await pideCamara({ width: { ideal: 1280 }, height: { ideal: 720 } }); }
+    catch (e) { s = await pideCamara({}); }
     camStream = s;
     $('cam').srcObject = camStream; await $('cam').play().catch(() => {});
     const st = s.getVideoTracks()[0].getSettings();
@@ -493,7 +485,10 @@ const cvCam = $('camCv'), ctxCam = cvCam.getContext('2d');
 function dibujaCam() {
   const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
   if (camStream && vw && vh) {
-    const k = Math.max(1080 / vw, 1920 / vh), w = vw * k, h = vh * k;
+    /* vertical: llena el lienzo 9:16 (recorte ligero, como la camara del iPhone).
+       horizontal: cabe completo con negro arriba y abajo; nunca el zoom de recortar 16:9 dentro de 9:16 */
+    const k = vh >= vw ? Math.max(1080 / vw, 1920 / vh) : Math.min(1080 / vw, 1920 / vh), w = vw * k, h = vh * k;
+    ctxCam.fillStyle = '#000'; ctxCam.fillRect(0, 0, 1080, 1920);
     ctxCam.drawImage(v, (1080 - w) / 2, (1920 - h) / 2, w, h);
   }
   requestAnimationFrame(dibujaCam);
