@@ -1,5 +1,5 @@
 // Prompter: funciona sin red despues de la primera visita.
-const VERSION = 'prompter-v2';
+const VERSION = 'prompter-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

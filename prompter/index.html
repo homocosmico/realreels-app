@@ -86,6 +86,16 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
 .pastilla .punto{width:8px;height:8px;border-radius:4px;background:var(--gris)}
 .pastilla.oye .punto{background:var(--hueso);animation:late 1.2s infinite}
 .pastilla.rec{border-color:var(--rojo)} .pastilla.rec .punto{background:var(--rojo);animation:late 1s infinite}
+.pastilla.mic .nivel{width:54px;height:6px;border-radius:3px;background:#2A2A2A;overflow:hidden}
+.pastilla.mic .nivel i{display:block;height:100%;width:0;background:var(--hueso);transition:width .08s linear}
+.pastilla.mic.mal{border-color:var(--rojo);color:var(--rojo-txt)} .pastilla.mic.mal .nivel i{background:var(--rojo)}
+#tomas{position:fixed;inset:0;z-index:20;background:var(--negro);display:flex;flex-direction:column;gap:12px;
+  padding:calc(var(--sa-t) + 18px) max(16px,var(--sa-r)) calc(var(--sa-b) + 16px) max(16px,var(--sa-l));overflow-y:auto}
+#tomas h2{margin:0;font-family:var(--titulo);font-weight:400;font-size:40px}
+#tomas .nota{margin:0;color:var(--gris);font-size:13px;line-height:1.4}
+.toma{display:flex;flex-direction:column;gap:8px;border:1px solid var(--borde);border-radius:14px;padding:12px;background:var(--panel2)}
+.toma b{font-size:15px} .toma span{color:var(--gris2);font-size:13px;font-variant-numeric:tabular-nums}
+.toma .fila{gap:8px}
 @keyframes late{50%{opacity:.25}}
 
 #controles{position:absolute;left:0;right:0;bottom:0;z-index:8;display:flex;flex-direction:column;gap:10px;
@@ -139,6 +149,7 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
     <span id="zonaBorrar"><button class="btn peligro" id="borrar" type="button">Borrar</button></span>
   </div>
   <div class="fila">
+    <button class="btn" id="verTomas" type="button">Tomas</button>
     <button class="btn grande" id="empezar" type="button">Abrir prompter</button>
   </div>
 </section>
@@ -151,6 +162,7 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
   <div id="ventanaTexto"><div id="rollo"></div></div>
   <div id="marca"></div>
   <div id="estado">
+    <div class="pastilla mic" id="pMic" hidden><span id="tMic">Mic</span><span class="nivel"><i id="nMic"></i></span></div>
     <div class="pastilla" id="pCam" hidden></div>
     <div class="pastilla" id="pRec" hidden><span class="punto"></span><span id="tRec">0:00</span></div>
     <div class="pastilla" id="pVoz" hidden><span class="punto"></span><span id="tVoz">Voz</span></div>
@@ -200,9 +212,16 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
   <div id="hoja" hidden>
     <h2>Toma grabada</h2>
     <p id="hojaInfo"></p>
-    <button class="btn grande" id="guardarVideo" type="button">Guardar video</button>
-    <button class="btn" id="descartar" type="button">Descartar</button>
+    <button class="btn grande" id="guardarVideo" type="button">Guardar en Fotos</button>
+    <button class="btn" id="descartar" type="button">Cerrar</button>
   </div>
+</section>
+
+<!-- ============ TOMAS ============ -->
+<section id="tomas" hidden>
+  <div class="cabeza"><h2>Tomas</h2><button class="btn" id="cierraTomas" type="button">Volver</button></div>
+  <p class="nota">Cada toma se guarda aquí sola en cuanto la detienes, aunque cierres la app. Para que llegue a Fotos toca Guardar en Fotos y luego Guardar video.</p>
+  <div id="listaTomas"></div>
 </section>
 
 <script>
@@ -462,6 +481,157 @@ function posEnLinea() {
   return palabras.length;
 }
 
+/* ---------- Tomas: se guardan solas en el telefono (IndexedDB) ---------- */
+let bd = null;
+function abreBD() {
+  if (bd) return Promise.resolve(bd);
+  return new Promise((ok, mal) => {
+    const r = indexedDB.open('prompter_tomas', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains('tomas')) d.createObjectStore('tomas', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('trozos')) d.createObjectStore('trozos', { autoIncrement: true }).createIndex('toma', 'toma');
+    };
+    r.onsuccess = () => { bd = r.result; ok(bd); };
+    r.onerror = () => mal(r.error);
+  });
+}
+function tx(store, modo, fn) {
+  return abreBD().then(d => new Promise((ok, mal) => {
+    const x = d.transaction(store, modo); let res;
+    Promise.resolve(fn(x.objectStore(store))).then(v => res = v);
+    x.oncomplete = () => ok(res); x.onerror = () => mal(x.error); x.onabort = () => mal(x.error);
+  }));
+}
+const pide = (rq) => new Promise((ok, mal) => { rq.onsuccess = () => ok(rq.result); rq.onerror = () => mal(rq.error); });
+const guardaTrozo = (toma, i, blob) => tx('trozos', 'readwrite', s => { s.add({ toma, i, blob }); }).catch(() => {});
+async function cierraToma(meta, tipo) {
+  // junta los trozos guardados en el orden en que llegaron y los guarda como una toma
+  const trozosT = await tx('trozos', 'readonly', s => pide(s.index('toma').getAll(meta.id)));
+  trozosT.sort((a, b) => a.i - b.i);
+  const blob = new Blob(trozosT.map(z => z.blob), { type: tipo || 'video/mp4' });
+  if (!blob.size) return null;
+  const rec = Object.assign({}, meta, { blob, size: blob.size, tipo: blob.type });
+  if (!rec.seg) rec.seg = trozosT.length; // un trozo por segundo
+  await tx('tomas', 'readwrite', s => { s.put(rec); });
+  await tx('trozos', 'readwrite', s => pide(s.index('toma').getAllKeys(meta.id)).then(ks => ks.forEach(k => s.delete(k))));
+  return rec;
+}
+async function rescataTomas() {
+  // si la app se cerro grabando, los trozos siguen aqui: se convierten en toma
+  try {
+    const ts = await tx('trozos', 'readonly', s => pide(s.getAll()));
+    const ids = [...new Set(ts.map(z => z.toma))];
+    for (const id of ids) {
+      const meta = lee('pr_toma_' + id, { id, fecha: Date.now(), titulo: 'Toma recuperada', seg: 0 });
+      const r = await cierraToma(Object.assign(meta, { recuperada: true }), meta.tipo);
+      try { localStorage.removeItem('pr_toma_' + id); } catch (e) {}
+      if (r) aviso('Recuperé una toma que se quedó a medias. Está en Tomas.');
+    }
+  } catch (e) {}
+  pintaBotonTomas();
+}
+let tomasMem = [];
+async function cargaTomas() {
+  try { tomasMem = await tx('tomas', 'readonly', s => pide(s.getAll())); } catch (e) { tomasMem = []; }
+  tomasMem.sort((a, b) => b.fecha - a.fecha);
+  return tomasMem;
+}
+async function pintaBotonTomas() { await cargaTomas(); $('verTomas').textContent = 'Tomas · ' + tomasMem.length; }
+const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+function nombreToma(r) {
+  const ext = (r.tipo || '').includes('webm') ? 'webm' : 'mp4';
+  return ((r.titulo || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40)) + '_' + new Date(r.fecha).toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
+}
+async function mandaAFotos(r) {
+  // se llama directo desde el toque: el blob ya esta en memoria para que iOS no pierda el gesto
+  const file = new File([r.blob], nombreToma(r), { type: r.blob.type || 'video/mp4' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return true; }
+  } catch (e) { if (e && e.name === 'AbortError') return false; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+  return true;
+}
+async function pintaTomas() {
+  await cargaTomas();
+  const c = $('listaTomas'); c.textContent = '';
+  if (!tomasMem.length) { const p = document.createElement('p'); p.className = 'nota'; p.textContent = 'Todavía no hay tomas. Graba una desde el prompter.'; c.appendChild(p); }
+  tomasMem.forEach(r => {
+    const d = document.createElement('div'); d.className = 'toma';
+    const b = document.createElement('b'); b.textContent = (r.titulo || 'Toma') + (r.recuperada ? ' (recuperada)' : '');
+    const s = document.createElement('span');
+    s.textContent = new Date(r.fecha).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + mmss(r.seg || 0) + ' · ' + (r.size / 1048576).toFixed(1) + ' MB' + (r.ancho ? ' · ' + r.ancho + 'x' + r.alto : '');
+    const f = document.createElement('div'); f.className = 'fila';
+    const g = document.createElement('button'); g.className = 'btn'; g.type = 'button'; g.textContent = 'Guardar en Fotos';
+    g.onclick = () => mandaAFotos(r);
+    const zona = document.createElement('span');
+    const borra = () => {
+      zona.textContent = '';
+      const x = document.createElement('button'); x.className = 'btn peligro'; x.type = 'button'; x.textContent = 'Borrar';
+      x.onclick = () => {
+        zona.textContent = '';
+        const si = document.createElement('button'); si.className = 'btn peligro'; si.type = 'button'; si.textContent = 'Sí, borrar';
+        const no = document.createElement('button'); no.className = 'btn'; no.type = 'button'; no.textContent = 'No';
+        si.onclick = async () => { await tx('tomas', 'readwrite', st => { st.delete(r.id); }); pintaTomas(); pintaBotonTomas(); };
+        no.onclick = borra; zona.append(si, no);
+      };
+      zona.appendChild(x);
+    };
+    borra();
+    f.append(g, zona); d.append(b, s, f); c.appendChild(d);
+  });
+}
+$('verTomas').onclick = () => { guardaEditor(); $('tomas').hidden = false; pintaTomas(); };
+$('cierraTomas').onclick = () => { $('tomas').hidden = true; pintaBotonTomas(); };
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+
+/* ---------- Medidor de micrófono ---------- */
+let audioCtx = null, analizador = null, micMudoDesde = 0, micMuerto = false;
+async function abreMic() {
+  if (audioStream && audioStream.getAudioTracks().some(tr => tr.readyState === 'live')) return true;
+  try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { audioStream = null; pintaMic('Sin micrófono', true, 0); return false; }
+  micMuerto = false;
+  audioStream.getAudioTracks().forEach(tr => {
+    tr.onended = () => { micMuerto = true; pintaMic('Mic desconectado', true, 0); };
+    tr.onmute = () => { micMuerto = true; pintaMic('Mic sin señal', true, 0); };
+    tr.onunmute = () => { micMuerto = false; };
+  });
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    analizador = audioCtx.createAnalyser(); analizador.fftSize = 1024;
+    audioCtx.createMediaStreamSource(audioStream).connect(analizador);
+  } catch (e) { analizador = null; }
+  $('pMic').hidden = false;
+  return true;
+}
+function cierraMic() {
+  if (audioStream) { audioStream.getTracks().forEach(tr => tr.stop()); audioStream = null; }
+  analizador = null; $('pMic').hidden = true;
+}
+function pintaMic(txt, mal, nivel) {
+  $('pMic').hidden = false; $('tMic').textContent = txt;
+  $('pMic').classList.toggle('mal', !!mal); $('nMic').style.width = Math.round(nivel * 100) + '%';
+}
+const bufMic = new Float32Array(1024);
+function midelMic() {
+  if (analizador && !micMuerto && !$('prompter').hidden) {
+    analizador.getFloatTimeDomainData(bufMic);
+    let s = 0; for (let i = 0; i < bufMic.length; i++) s += bufMic[i] * bufMic[i];
+    const rms = Math.sqrt(s / bufMic.length), nivel = Math.min(1, Math.max(0, (20 * Math.log10(rms + 1e-8) + 60) / 50));
+    const ahora = performance.now();
+    if (nivel > 0.08) micMudoDesde = 0; else if (!micMudoDesde) micMudoDesde = ahora;
+    const callado = micMudoDesde && ahora - micMudoDesde > 5000;
+    const grabando = grabador && grabador.state === 'recording';
+    pintaMic(callado ? (grabando ? 'Sin sonido' : 'Mic · silencio') : 'Mic', callado && grabando, nivel);
+  }
+  requestAnimationFrame(midelMic);
+}
+requestAnimationFrame(midelMic);
+// iOS deja el audio suspendido hasta un toque: cualquier toque lo reanuda
+document.addEventListener('pointerdown', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); }, true);
+
 /* ---------- Cámara y grabación ---------- */
 let camStream = null, audioStream = null, grabador = null, trozos = [], tRecIni = 0, tRecInt = null, ultimoVideo = null;
 const esVertical = () => innerHeight >= innerWidth;
@@ -532,22 +702,32 @@ async function empiezaGrabar() {
   if (!window.MediaRecorder) { aviso('Este navegador no graba video.'); return; }
   if (!camStream) { aj.cam = aj.cam === 'off' ? 'ventana' : aj.cam; pintaCam(); await abreCamara(); }
   if (!camStream) return;
-  try { audioStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch (e) { aviso('Sin micrófono: grabo solo imagen.'); audioStream = null; }
+  if (!(await abreMic())) aviso('Sin micrófono: grabo solo imagen.');
   const pistaVideo = cvCam.captureStream(30).getVideoTracks();
   const pista = new MediaStream([...pistaVideo, ...(audioStream ? audioStream.getAudioTracks() : [])]);
   const tipo = tipoVideo();
   try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: grande ? 25000000 : 8000000 } : undefined); }
   catch (e) { grabador = new MediaRecorder(pista); }
   trozos = [];
-  grabador.ondataavailable = (e) => { if (e.data && e.data.size) trozos.push(e.data); };
-  grabador.onstop = () => {
-    const t = grabador.mimeType || tipo || 'video/mp4';
+  const gActual = actual();
+  const meta = { id: 't' + Date.now().toString(36), fecha: Date.now(), titulo: (gActual && gActual.titulo) || 'Toma', ancho: cvCam.width, alto: cvCam.height, tipo: grabador.mimeType || tipo || 'video/mp4' };
+  guarda('pr_toma_' + meta.id, meta);
+  let nTrozo = 0;
+  grabador.ondataavailable = (e) => { if (e.data && e.data.size) { trozos.push(e.data); guardaTrozo(meta.id, nTrozo++, e.data); } };
+  grabador.onstop = async () => {
+    const t = grabador.mimeType || meta.tipo;
     ultimoVideo = new Blob(trozos, { type: t });
-    if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
-    const seg = Math.round((Date.now() - tRecIni) / 1000);
-    $('hojaInfo').textContent = 'Duración ' + Math.floor(seg / 60) + ':' + String(seg % 60).padStart(2, '0') + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB';
+    meta.seg = (Date.now() - tRecIni) / 1000; meta.tipo = t;
+    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB · guardando en Tomas…';
     $('hoja').hidden = false;
+    // espera a que el ultimo trozo termine de escribirse antes de juntar
+    await new Promise(r => setTimeout(r, 300));
+    let ok = false;
+    try { ok = !!(await cierraToma(meta, t)); } catch (e) {}
+    try { localStorage.removeItem('pr_toma_' + meta.id); } catch (e) {}
+    if (!ok) { try { await tx('tomas', 'readwrite', s => { s.put(Object.assign({}, meta, { blob: ultimoVideo, size: ultimoVideo.size })); }); ok = true; } catch (e) {} }
+    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB · ' + (ok ? 'guardada en Tomas, no se pierde si cierras la app' : 'NO se pudo guardar en Tomas: mándala a Fotos ya');
+    pintaBotonTomas();
   };
   grabador.start(1000);
   tRecIni = Date.now(); $('rec').classList.add('on'); $('recTxt').textContent = 'Detener'; $('rec').setAttribute('aria-label', 'Detener grabación'); $('pRec').hidden = false; $('pRec').classList.add('rec');
@@ -565,6 +745,7 @@ $('guardarVideo').onclick = async () => {
   const ext = ultimoVideo.type.includes('mp4') ? 'mp4' : 'webm';
   const g = actual();
   const nombre = ((g && g.titulo) || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40) + '_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
+  /* la toma ya esta guardada en Tomas; esto solo la manda a Fotos */
   const file = new File([ultimoVideo], nombre, { type: ultimoVideo.type });
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); $('hoja').hidden = true; return; }
@@ -572,12 +753,16 @@ $('guardarVideo').onclick = async () => {
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
   $('hoja').hidden = true;
 };
-$('descartar').onclick = () => { ultimoVideo = null; $('hoja').hidden = true; };
+$('descartar').onclick = () => { $('hoja').hidden = true; };
 
 /* ---------- Pantalla encendida ---------- */
 let candado = null;
 async function pideCandado() { try { if ('wakeLock' in navigator) candado = await navigator.wakeLock.request('screen'); } catch (e) {} }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !$('prompter').hidden) pideCandado(); });
+// si la app se va al fondo o se cierra grabando, se pide el ultimo trozo para que quede guardado
+const vaciaGrabador = () => { try { if (grabador && grabador.state === 'recording') grabador.requestData(); } catch (e) {} };
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') vaciaGrabador(); });
+window.addEventListener('pagehide', vaciaGrabador);
 
 /* ---------- Controles ---------- */
 let tAviso, tOculta;
@@ -682,12 +867,12 @@ $('empezar').onclick = async () => {
   corriendo = false; $('play').textContent = 'Empezar';
   if (!SR) { $('mVoz').disabled = true; if (aj.modo === 'voz') { aj.modo = 'manual'; } }
   pintaModo(); muestraControles();
-  pideCandado(); abreCamara();
+  pideCandado(); abreCamara(); abreMic();
   try { history.pushState({ p: 1 }, ''); } catch (e) {}
 };
 function salir() {
   if (grabador && grabador.state === 'recording') paraGrabar();
-  alto(); cierraCamara();
+  alto(); cierraCamara(); cierraMic();
   if (candado) { try { candado.release(); } catch (e) {} candado = null; }
   $('prompter').hidden = true; $('editor').hidden = false; $('hoja').hidden = true;
 }
@@ -696,6 +881,7 @@ window.addEventListener('popstate', () => { if (!$('prompter').hidden) salir(); 
 
 document.documentElement.style.setProperty('--velo', aj.velo);
 cargaEditor();
+rescataTomas();
 requestAnimationFrame(cuadro);
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
