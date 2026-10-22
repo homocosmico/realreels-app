@@ -81,7 +81,17 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
   border-top:9px solid transparent;border-bottom:9px solid transparent;border-left:12px solid var(--rojo)}
 #cuenta{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:9;
   font-family:var(--titulo);font-size:180px;color:var(--hueso);background:rgba(0,0,0,.35);pointer-events:none}
-#estado{position:absolute;top:calc(var(--sa-t) + 10px);right:max(12px,var(--sa-r));z-index:6;display:flex;gap:6px;pointer-events:none}
+#estado{position:absolute;top:calc(var(--sa-t) + 58px);right:max(12px,var(--sa-r));left:max(12px,var(--sa-l));z-index:6;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;pointer-events:none}
+/* Rotulo de grabacion: siempre visible en el prompter, encima de todo, nunca se oculta con los controles */
+#rotulo{position:absolute;top:calc(var(--sa-t) + 10px);left:50%;transform:translateX(-50%);z-index:30;pointer-events:none;
+  height:40px;padding:0 18px;border-radius:99px;display:flex;align-items:center;gap:10px;white-space:nowrap;
+  font-weight:700;font-size:15px;letter-spacing:1.5px;font-variant-numeric:tabular-nums;
+  background:rgba(11,11,11,.85);color:var(--hueso);border:1.5px solid #555}
+#rotulo .punto{width:12px;height:12px;border-radius:6px;background:#777}
+#rotulo.rec{background:var(--rojo);border-color:var(--rojo);color:#fff}
+#rotulo.rec .punto{background:#fff;animation:late 1s infinite}
+#marcoRec{position:absolute;inset:0;z-index:29;pointer-events:none;border:5px solid var(--rojo);display:none}
+#marcoRec.on{display:block}
 .pastilla{height:26px;padding:0 10px;border-radius:99px;background:rgba(11,11,11,.75);border:1px solid #333;font-size:12px;display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .pastilla .punto{width:8px;height:8px;border-radius:4px;background:var(--gris)}
 .pastilla.oye .punto{background:var(--hueso);animation:late 1.2s infinite}
@@ -161,6 +171,8 @@ select.btn{appearance:none;-webkit-appearance:none;background:var(--panel2);padd
   <div id="velo"></div>
   <div id="ventanaTexto"><div id="rollo"></div></div>
   <div id="marca"></div>
+  <div id="marcoRec"></div>
+  <div id="rotulo" role="status" aria-live="polite"><span class="punto"></span><span id="tRotulo">NO GRABANDO</span></div>
   <div id="estado">
     <div class="pastilla mic" id="pMic" hidden><span id="tMic">Mic</span><span class="nivel"><i id="nMic"></i></span></div>
     <div class="pastilla" id="pCam" hidden></div>
@@ -538,7 +550,7 @@ async function cargaTomas() {
   return tomasMem;
 }
 async function pintaBotonTomas() { await cargaTomas(); $('verTomas').textContent = 'Tomas · ' + tomasMem.length; }
-const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 function nombreToma(r) {
   const ext = (r.tipo || '').includes('webm') ? 'webm' : 'mp4';
   return ((r.titulo || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40)) + '_' + new Date(r.fecha).toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
@@ -713,6 +725,7 @@ async function empiezaGrabar() {
   const meta = { id: 't' + Date.now().toString(36), fecha: Date.now(), titulo: (gActual && gActual.titulo) || 'Toma', ancho: cvCam.width, alto: cvCam.height, tipo: grabador.mimeType || tipo || 'video/mp4' };
   guarda('pr_toma_' + meta.id, meta);
   let nTrozo = 0;
+  grabador.onerror = () => aviso('Error del grabador: la toma se detuvo. Revisa Tomas.');
   grabador.ondataavailable = (e) => { if (e.data && e.data.size) { trozos.push(e.data); guardaTrozo(meta.id, nTrozo++, e.data); } };
   grabador.onstop = async () => {
     const t = grabador.mimeType || meta.tipo;
@@ -730,7 +743,7 @@ async function empiezaGrabar() {
     pintaBotonTomas();
   };
   grabador.start(1000);
-  tRecIni = Date.now(); $('rec').classList.add('on'); $('recTxt').textContent = 'Detener'; $('rec').setAttribute('aria-label', 'Detener grabación'); $('pRec').hidden = false; $('pRec').classList.add('rec');
+  tRecIni = Date.now(); $('rec').classList.add('on'); $('recTxt').textContent = 'Detener'; $('rec').setAttribute('aria-label', 'Detener grabación'); 
   tRecInt = setInterval(() => { const s = Math.floor((Date.now() - tRecIni) / 1000); $('tRec').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 500);
   if (!corriendo) empieza();
 }
@@ -754,6 +767,21 @@ $('guardarVideo').onclick = async () => {
   $('hoja').hidden = true;
 };
 $('descartar').onclick = () => { $('hoja').hidden = true; };
+
+/* ---------- Rotulo GRABANDO / NO GRABANDO: lee el grabador real en cada cuadro ---------- */
+let rotuloPrevio = null;
+function pintaRotulo() {
+  const grabando = !!(grabador && grabador.state === 'recording');
+  const txt = grabando ? 'GRABANDO ' + mmss((Date.now() - tRecIni) / 1000) : 'NO GRABANDO';
+  if (txt !== rotuloPrevio) {
+    $('tRotulo').textContent = txt; $('rotulo').classList.toggle('rec', grabando); $('marcoRec').classList.toggle('on', grabando);
+    // si el boton dice Detener pero el grabador ya no graba, se avisa y se corrige el boton
+    if (!grabando && $('rec').classList.contains('on')) { aviso('La grabación se detuvo sola. Revisa Tomas.'); paraGrabar(); }
+    rotuloPrevio = txt;
+  }
+  requestAnimationFrame(pintaRotulo);
+}
+requestAnimationFrame(pintaRotulo);
 
 /* ---------- Pantalla encendida ---------- */
 let candado = null;
