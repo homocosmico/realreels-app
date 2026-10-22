@@ -516,29 +516,58 @@ function tx(store, modo, fn) {
   }));
 }
 const pide = (rq) => new Promise((ok, mal) => { rq.onsuccess = () => ok(rq.result); rq.onerror = () => mal(rq.error); });
-const guardaTrozo = (toma, i, blob) => tx('trozos', 'readwrite', s => { s.add({ toma, i, blob }); }).catch(() => {});
-async function cierraToma(meta, tipo) {
-  // junta los trozos guardados en el orden en que llegaron y los guarda como una toma
-  const trozosT = await tx('trozos', 'readonly', s => pide(s.index('toma').getAll(meta.id)));
-  trozosT.sort((a, b) => a.i - b.i);
-  const blob = new Blob(trozosT.map(z => z.blob), { type: tipo || 'video/mp4' });
-  if (!blob.size) return null;
-  const rec = Object.assign({}, meta, { blob, size: blob.size, tipo: blob.type });
-  if (!rec.seg) rec.seg = trozosT.length; // un trozo por segundo
+/* Los trozos se escriben de uno en uno y nunca se juntan en memoria: una toma de 12 minutos son cientos de MB
+   y juntarlos trababa el iPhone. La toma se arma solo al mandarla a Fotos. */
+let colaTrozos = Promise.resolve(), fallosTrozo = 0, bytesGrab = 0;
+function guardaTrozo(toma, i, blob) {
+  colaTrozos = colaTrozos.then(() => tx('trozos', 'readwrite', s => { s.add({ toma, i, blob }); })).catch(() => { fallosTrozo++; });
+  return colaTrozos;
+}
+function recorreTrozos(id, fn) {
+  return tx('trozos', 'readonly', s => new Promise((ok, mal) => {
+    const rq = s.index('toma').openCursor(IDBKeyRange.only(id));
+    rq.onsuccess = () => { const c = rq.result; if (!c) return ok(); fn(c.value); c.continue(); };
+    rq.onerror = () => mal(rq.error);
+  }));
+}
+async function midetoma(id) { let n = 0, size = 0; await recorreTrozos(id, z => { n++; size += z.blob.size; }); return { n, size }; }
+async function archivoToma(r) {
+  if (r.blob) return new File([r.blob], nombreToma(r), { type: r.blob.type || 'video/mp4' });
+  const partes = []; await recorreTrozos(r.id, z => partes.push(z)); partes.sort((a, b) => a.i - b.i);
+  return new File(partes.map(z => z.blob), nombreToma(r), { type: r.tipo || 'video/mp4' });
+}
+async function cierraToma(meta) {
+  const { n, size } = await midetoma(meta.id);
+  if (!n) return null;
+  const rec = Object.assign({}, meta, { size, n }); if (!rec.seg) rec.seg = n; // un trozo por segundo
   await tx('tomas', 'readwrite', s => { s.put(rec); });
-  await tx('trozos', 'readwrite', s => pide(s.index('toma').getAllKeys(meta.id)).then(ks => ks.forEach(k => s.delete(k))));
   return rec;
 }
+async function borraToma(id) {
+  await tx('tomas', 'readwrite', s => { s.delete(id); });
+  await tx('trozos', 'readwrite', s => new Promise((ok, mal) => {
+    const rq = s.index('toma').openKeyCursor(IDBKeyRange.only(id));
+    rq.onsuccess = () => { const c = rq.result; if (!c) return ok(); s.delete(c.primaryKey); c.continue(); };
+    rq.onerror = () => mal(rq.error);
+  }));
+}
 async function rescataTomas() {
-  // si la app se cerro grabando, los trozos siguen aqui: se convierten en toma
+  // si la app se cerro o se trabo grabando, los trozos siguen aqui: se registra la toma sin juntarlos
   try {
-    const ts = await tx('trozos', 'readonly', s => pide(s.getAll()));
-    const ids = [...new Set(ts.map(z => z.toma))];
+    const conMeta = new Set(await tx('tomas', 'readonly', s => pide(s.getAllKeys())));
+    const ids = [];
+    await tx('trozos', 'readonly', s => new Promise((ok, mal) => {
+      const rq = s.index('toma').openKeyCursor(null, 'nextunique');
+      rq.onsuccess = () => { const c = rq.result; if (!c) return ok(); ids.push(c.key); c.continue(); };
+      rq.onerror = () => mal(rq.error);
+    }));
     for (const id of ids) {
-      const meta = lee('pr_toma_' + id, { id, fecha: Date.now(), titulo: 'Toma recuperada', seg: 0 });
-      const r = await cierraToma(Object.assign(meta, { recuperada: true }), meta.tipo);
+      if (conMeta.has(id)) continue;
+      const meta = lee('pr_toma_' + id, { id, fecha: Date.now(), titulo: 'Toma' });
+      meta.seg = 0;
+      const r = await cierraToma(Object.assign(meta, { recuperada: true }));
       try { localStorage.removeItem('pr_toma_' + id); } catch (e) {}
-      if (r) aviso('Recuperé una toma que se quedó a medias. Está en Tomas.');
+      if (r) aviso('Recuperé una toma de ' + mmss(r.n) + ' que se quedó a medias. Está en Tomas.');
     }
   } catch (e) {}
   pintaBotonTomas();
@@ -555,14 +584,24 @@ function nombreToma(r) {
   const ext = (r.tipo || '').includes('webm') ? 'webm' : 'mp4';
   return ((r.titulo || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40)) + '_' + new Date(r.fecha).toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
 }
-async function mandaAFotos(r) {
-  // se llama directo desde el toque: el blob ya esta en memoria para que iOS no pierda el gesto
-  const file = new File([r.blob], nombreToma(r), { type: r.blob.type || 'video/mp4' });
+async function mandaAFotos(file) {
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return true; }
   } catch (e) { if (e && e.name === 'AbortError') return false; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
   return true;
+}
+// boton de dos pasos: primero arma el video desde el telefono, luego lo manda a Fotos con un toque
+function botonFotos(btn, r) {
+  let file = null;
+  btn.textContent = 'Preparar video';
+  btn.onclick = async () => {
+    if (file) { mandaAFotos(file); return; }
+    btn.disabled = true; btn.textContent = 'Preparando…';
+    try { file = await archivoToma(r); btn.textContent = 'Guardar en Fotos · ' + (file.size / 1048576).toFixed(0) + ' MB'; }
+    catch (e) { btn.textContent = 'No se pudo armar. Toca otra vez'; }
+    btn.disabled = false;
+  };
 }
 async function pintaTomas() {
   await cargaTomas();
@@ -572,10 +611,10 @@ async function pintaTomas() {
     const d = document.createElement('div'); d.className = 'toma';
     const b = document.createElement('b'); b.textContent = (r.titulo || 'Toma') + (r.recuperada ? ' (recuperada)' : '');
     const s = document.createElement('span');
-    s.textContent = new Date(r.fecha).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + mmss(r.seg || 0) + ' · ' + (r.size / 1048576).toFixed(1) + ' MB' + (r.ancho ? ' · ' + r.ancho + 'x' + r.alto : '');
+    s.textContent = new Date(r.fecha).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' · ' + mmss(r.seg || 0) + ' · ' + ((r.size || 0) / 1048576).toFixed(0) + ' MB' + (r.ancho ? ' · ' + r.ancho + 'x' + r.alto : '');
     const f = document.createElement('div'); f.className = 'fila';
-    const g = document.createElement('button'); g.className = 'btn'; g.type = 'button'; g.textContent = 'Guardar en Fotos';
-    g.onclick = () => mandaAFotos(r);
+    const g = document.createElement('button'); g.className = 'btn'; g.type = 'button';
+    botonFotos(g, r);
     const zona = document.createElement('span');
     const borra = () => {
       zona.textContent = '';
@@ -584,7 +623,7 @@ async function pintaTomas() {
         zona.textContent = '';
         const si = document.createElement('button'); si.className = 'btn peligro'; si.type = 'button'; si.textContent = 'Sí, borrar';
         const no = document.createElement('button'); no.className = 'btn'; no.type = 'button'; no.textContent = 'No';
-        si.onclick = async () => { await tx('tomas', 'readwrite', st => { st.delete(r.id); }); pintaTomas(); pintaBotonTomas(); };
+        si.onclick = async () => { await borraToma(r.id); pintaTomas(); pintaBotonTomas(); };
         no.onclick = borra; zona.append(si, no);
       };
       zona.appendChild(x);
@@ -645,7 +684,7 @@ requestAnimationFrame(midelMic);
 document.addEventListener('pointerdown', () => { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); }, true);
 
 /* ---------- Cámara y grabación ---------- */
-let camStream = null, audioStream = null, grabador = null, trozos = [], tRecIni = 0, tRecInt = null, ultimoVideo = null;
+let camStream = null, audioStream = null, grabador = null, tRecIni = 0, tRecInt = null, ultimoVideo = null;
 const esVertical = () => innerHeight >= innerWidth;
 const pideCamara = (v) => navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: 'user', frameRate: { ideal: 30 } }, v), audio: false });
 /* Cada lente pide la camara de otra forma. El iPhone en la app de inicio responde distinto que en Safari:
@@ -715,32 +754,36 @@ async function empiezaGrabar() {
   if (!camStream) { aj.cam = aj.cam === 'off' ? 'ventana' : aj.cam; pintaCam(); await abreCamara(); }
   if (!camStream) return;
   if (!(await abreMic())) aviso('Sin micrófono: grabo solo imagen.');
+  try {
+    const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+    if (est && est.quota && est.quota - est.usage < 1.5e9) aviso('Queda poco espacio para tomas (' + ((est.quota - est.usage) / 1e9).toFixed(1) + ' GB). Manda a Fotos y borra las viejas.');
+  } catch (e) {}
   const pistaVideo = cvCam.captureStream(30).getVideoTracks();
   const pista = new MediaStream([...pistaVideo, ...(audioStream ? audioStream.getAudioTracks() : [])]);
   const tipo = tipoVideo();
-  try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: grande ? 25000000 : 8000000 } : undefined); }
+  try { grabador = new MediaRecorder(pista, tipo ? { mimeType: tipo, videoBitsPerSecond: grande ? 16000000 : 6000000 } : undefined); }
   catch (e) { grabador = new MediaRecorder(pista); }
-  trozos = [];
+  bytesGrab = 0; fallosTrozo = 0; ultimoVideo = null;
   const gActual = actual();
   const meta = { id: 't' + Date.now().toString(36), fecha: Date.now(), titulo: (gActual && gActual.titulo) || 'Toma', ancho: cvCam.width, alto: cvCam.height, tipo: grabador.mimeType || tipo || 'video/mp4' };
   guarda('pr_toma_' + meta.id, meta);
   let nTrozo = 0;
   grabador.onerror = () => aviso('Error del grabador: la toma se detuvo. Revisa Tomas.');
-  grabador.ondataavailable = (e) => { if (e.data && e.data.size) { trozos.push(e.data); guardaTrozo(meta.id, nTrozo++, e.data); } };
+  grabador.ondataavailable = (e) => { if (e.data && e.data.size) { bytesGrab += e.data.size; guardaTrozo(meta.id, nTrozo++, e.data); } };
   grabador.onstop = async () => {
-    const t = grabador.mimeType || meta.tipo;
-    ultimoVideo = new Blob(trozos, { type: t });
-    meta.seg = (Date.now() - tRecIni) / 1000; meta.tipo = t;
-    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB · guardando en Tomas…';
+    meta.seg = (Date.now() - tRecIni) / 1000; meta.tipo = grabador.mimeType || meta.tipo;
+    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (bytesGrab / 1048576).toFixed(0) + ' MB · guardando en Tomas…';
+    $('guardarVideo').disabled = true; $('guardarVideo').textContent = 'Preparando…';
     $('hoja').hidden = false;
-    // espera a que el ultimo trozo termine de escribirse antes de juntar
-    await new Promise(r => setTimeout(r, 300));
-    let ok = false;
-    try { ok = !!(await cierraToma(meta, t)); } catch (e) {}
+    await new Promise(r => setTimeout(r, 250)); await colaTrozos; // el ultimo trozo termina de escribirse
+    let rec = null;
+    try { rec = await cierraToma(meta); } catch (e) {}
     try { localStorage.removeItem('pr_toma_' + meta.id); } catch (e) {}
-    if (!ok) { try { await tx('tomas', 'readwrite', s => { s.put(Object.assign({}, meta, { blob: ultimoVideo, size: ultimoVideo.size })); }); ok = true; } catch (e) {} }
-    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (ultimoVideo.size / 1048576).toFixed(1) + ' MB · ' + (ok ? 'guardada en Tomas, no se pierde si cierras la app' : 'NO se pudo guardar en Tomas: mándala a Fotos ya');
+    $('hojaInfo').textContent = 'Duración ' + mmss(meta.seg) + ' · ' + (bytesGrab / 1048576).toFixed(0) + ' MB · ' +
+      (rec ? 'guardada en Tomas, no se pierde si cierras la app' : 'NO se pudo guardar en Tomas') + (fallosTrozo ? ' · faltaron ' + fallosTrozo + ' s, el teléfono puede estar sin espacio' : '');
     pintaBotonTomas();
+    if (rec) { try { archivoHoja = await archivoToma(rec); } catch (e) { archivoHoja = null; } }
+    $('guardarVideo').disabled = !archivoHoja; $('guardarVideo').textContent = archivoHoja ? 'Guardar en Fotos' : 'Ábrela desde Tomas';
   };
   grabador.start(1000);
   tRecIni = Date.now(); $('rec').classList.add('on'); $('recTxt').textContent = 'Detener'; $('rec').setAttribute('aria-label', 'Detener grabación'); 
@@ -753,26 +796,15 @@ function paraGrabar() {
   if (corriendo) alto();
 }
 $('rec').onclick = () => { (grabador && grabador.state === 'recording') ? paraGrabar() : empiezaGrabar(); };
-$('guardarVideo').onclick = async () => {
-  if (!ultimoVideo) return;
-  const ext = ultimoVideo.type.includes('mp4') ? 'mp4' : 'webm';
-  const g = actual();
-  const nombre = ((g && g.titulo) || 'toma').replace(/[^\w\-]+/g, '_').slice(0, 40) + '_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.' + ext;
-  /* la toma ya esta guardada en Tomas; esto solo la manda a Fotos */
-  const file = new File([ultimoVideo], nombre, { type: ultimoVideo.type });
-  try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); $('hoja').hidden = true; return; }
-  } catch (e) { if (e && e.name === 'AbortError') return; }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
-  $('hoja').hidden = true;
-};
+let archivoHoja = null;
+$('guardarVideo').onclick = async () => { if (archivoHoja && await mandaAFotos(archivoHoja)) $('hoja').hidden = true; };
 $('descartar').onclick = () => { $('hoja').hidden = true; };
 
 /* ---------- Rotulo GRABANDO / NO GRABANDO: lee el grabador real en cada cuadro ---------- */
 let rotuloPrevio = null;
 function pintaRotulo() {
   const grabando = !!(grabador && grabador.state === 'recording');
-  const txt = grabando ? 'GRABANDO ' + mmss((Date.now() - tRecIni) / 1000) : 'NO GRABANDO';
+  const txt = grabando ? 'GRABANDO ' + mmss((Date.now() - tRecIni) / 1000) + ' · ' + (bytesGrab / 1048576).toFixed(0) + ' MB' : 'NO GRABANDO';
   if (txt !== rotuloPrevio) {
     $('tRotulo').textContent = txt; $('rotulo').classList.toggle('rec', grabando); $('marcoRec').classList.toggle('on', grabando);
     // si el boton dice Detener pero el grabador ya no graba, se avisa y se corrige el boton
